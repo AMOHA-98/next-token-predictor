@@ -65,7 +65,7 @@ async def predict_stream(req: PredictRequest):
         def is_boundary(text: str) -> bool:
             if not text:
                 return False
-            return text[-1].isspace() or text[-1] in ".,;:!?)]}"'"
+            return text[-1].isspace() or text[-1] in ".,;:!?)]}\"'"
         async for chunk in service.client.stream_chat_model(messages):
             if not isinstance(chunk, str) or not chunk:
                 continue
