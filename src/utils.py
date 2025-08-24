@@ -1,6 +1,7 @@
 from __future__ import annotations
 import random
 from typing import Any, Dict, Generic, TypeVar, Callable
+import hashlib
 import httpx
 
 T = TypeVar("T")
@@ -106,4 +107,10 @@ async def make_api_request(
     except Exception as e:
         return err(e)
 
+
+
+def stable_hash(text: str) -> str:
+    """Return a short, stable hex hash for cache/singleflight keys."""
+    h = hashlib.sha1(text.encode("utf-8"))
+    return h.hexdigest()[:16]
 

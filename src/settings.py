@@ -3,7 +3,7 @@ from typing import List, Literal
 from pydantic import BaseModel, Field
 from .types import ModelOptions, FewShotExample
 
-ApiProvider = Literal["openai", "openrouter"]
+ApiProvider = Literal["openai", "openrouter", "gemini"]
 
 
 class OpenAISettings(BaseModel):
@@ -20,10 +20,16 @@ class OpenRouterSettings(BaseModel):
     app_title: str | None = None
 
 
+class GeminiSettings(BaseModel):
+    key: str = ""
+    model: str = "gemini-2.5-flash"
+
+
 class Settings(BaseModel):
-    api_provider: ApiProvider = "openai"
+    api_provider: ApiProvider = "gemini"
     openai: OpenAISettings = Field(default_factory=OpenAISettings)
     openrouter: OpenRouterSettings = Field(default_factory=OpenRouterSettings)
+    gemini: GeminiSettings = Field(default_factory=GeminiSettings)
 
     model_options: ModelOptions = Field(default_factory=ModelOptions)
     system_message: str = "You autocomplete text for writers. Output only the completion."

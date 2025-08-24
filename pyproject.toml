@@ -1,7 +1,7 @@
 [project]
 name = "next-token-predictor"
 version = "0.1.0"
-description = "Async FastAPI autocomplete prediction service (OpenAI/OpenRouter)"
+description = "Async FastAPI autocomplete prediction service "
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -10,5 +10,9 @@ dependencies = [
     "httpx>=0.27",
     "pydantic>=2.7",
     "jinja2>=3.1",
+    "anyio>=4.4",
+    "google-genai>=0.3",
+    "aiolimiter>=1.1",
+    "cachetools>=5.3",
 ]
 

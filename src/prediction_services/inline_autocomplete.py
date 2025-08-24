@@ -17,6 +17,7 @@ from ..post_processors.remove_whitespace import RemoveWhitespace
 
 from ..api_clients.openai_client import OpenAIClient
 from ..api_clients.openrouter_client import OpenRouterClient
+from ..api_clients.gemini_client import GeminiClient
 
 
 class InlineAutoCompleter(PredictionService):
@@ -58,6 +59,8 @@ class InlineAutoCompleter(PredictionService):
             client = OpenAIClient.from_settings(s)
         elif s.api_provider == "openrouter":
             client = OpenRouterClient.from_settings(s)
+        elif s.api_provider == "gemini":
+            client = GeminiClient.from_settings(s)
         else:
             raise ValueError("Invalid API provider")
 
@@ -87,6 +90,8 @@ class InlineAutoCompleter(PredictionService):
 
         result = self._extract_answer(result)
 
+        # Ensure we still have context for post-processing
+        context = get_context(prefix, suffix)
         for post in self.post_processors:
             result = result.map(lambda r: post.process(prefix, suffix, r, context))
 
