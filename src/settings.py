@@ -36,7 +36,7 @@ class Settings(BaseModel):
         "You insert text at <mask/> so the combined document reads naturally. "
         "Use BOTH the prefix and suffix as context. Output only the text to insert. "
         "Do not repeat what is already present in the prefix. Avoid reprinting the suffix. "
-        "Always output at least one word; if unsure, continue the current phrase concisely."
+        "Do not output only whitespace. If unsure, produce a short continuation (2–8 words)."
     )
     user_message_template: str = (
         "Insert text at <mask/> so the final text flows from <prefix/> to <suffix/>.\n"

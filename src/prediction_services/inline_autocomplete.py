@@ -143,10 +143,9 @@ class InlineAutoCompleter(PredictionService):
     def _guardrails(self, result: Result[str]) -> Result[str]:
         if result.is_err(): return result
         v = result.value or ""
-        if not v.strip():
-            return err(RuntimeError("Empty result"))
         if "<mask/>" in v:
             return err(RuntimeError("Mask in result"))
+        # Allow empty suggestion as a valid "no suggestion" case
         return ok(v)
 
 

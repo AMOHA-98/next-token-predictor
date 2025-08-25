@@ -259,13 +259,30 @@ function onSelectionChange() {
   renderGhost();
 }
 
-async function fetchSuggest(prefix, suffix, sig) {
-  const now = performance.now();
+const CASCADE_MAX_ROUNDS = 3;
+const CASCADE_MAX_MS = 220;
+const CASCADE_MIN_LEN = 12;
+const END_BOUNDARY = /[.!?…]\s?$|[\n\r]$/;
+
+async function fetchOnce(prefix, suffix, sig, signal) {
+  const res = await fetch('/predict', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-Client-Id': clientId},
+    signal,
+    body: JSON.stringify({prefix, suffix}),
+  });
+  const json = await res.json().catch(() => ({}));
+  const text = (json && json.completion) ? json.completion : '';
+  return { text };
+}
+
+async function fetchSuggestCascade(prefix, suffix, sig) {
   const minInterval = 1000 / MAX_RPS;
+  const now = performance.now();
   if (now - lastTriggeredAt < minInterval) {
     const wait = Math.max(0, minInterval - (now - lastTriggeredAt));
     clearTimeout(t);
-    t = setTimeout(() => fetchSuggest(prefix, suffix, sig), wait);
+    t = setTimeout(() => fetchSuggestCascade(prefix, suffix, sig), wait);
     return;
   }
   lastTriggeredAt = performance.now();
@@ -273,31 +290,38 @@ async function fetchSuggest(prefix, suffix, sig) {
   if (pendingCtrl && typeof pendingCtrl.abort === 'function') pendingCtrl.abort();
   pendingCtrl = new AbortController();
 
-  const started = performance.now();
-  try {
-    const res = await fetch('/predict', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'X-Client-Id': clientId},
-      signal: pendingCtrl.signal,
-      body: JSON.stringify({prefix, suffix}),
-    });
-    if (!res.ok) {
-      meta.textContent = `Request failed: ${res.status}`;
-      return;
+  let accum = '';
+  const caret0 = box.selectionStart;
+  const t0 = performance.now();
+
+  for (let round = 0; round < CASCADE_MAX_ROUNDS; round++) {
+    if (box.selectionStart !== caret0 || box.selectionEnd !== caret0) break;
+    if (keySig(prefix + accum, suffix) !== sig) break;
+    if (performance.now() - t0 > CASCADE_MAX_MS) break;
+
+    const { text } = await fetchOnce(prefix + accum, suffix, sig, pendingCtrl.signal);
+    if (pendingCtrl.signal.aborted) return;
+
+    let delta = text || '';
+    const maxOverlap = Math.min(delta.length, accum.length, 64);
+    for (let k = maxOverlap; k > 0; k--) {
+      if (accum.slice(-k) === delta.slice(0, k)) { delta = delta.slice(k); break; }
     }
-    const json = await res.json().catch(() => ({}));
-    lastLatency = Math.round(performance.now() - started);
-    lastKeySig = sig;
-    lastRequestPrefixLen = prefix.length;
-    lastSuggest = (json && json.completion) ? json.completion : '';
+    if (!delta) break;
+
+    accum += delta;
+    lastSuggest = accum;
     renderGhost();
-    meta.textContent = `Latency: ${lastLatency} ms  •  Tokens max: server-side`;
-  } catch (e) {
-    if (pendingCtrl && pendingCtrl.signal && pendingCtrl.signal.aborted) return;
-    lastSuggest = '';
-    renderGhost();
-    meta.textContent = 'Error fetching suggestion';
+
+    if (END_BOUNDARY.test(accum) || accum.length >= 64) break;
+    if (accum.length >= CASCADE_MIN_LEN) break;
   }
+}
+
+async function fetchSuggest(prefix, suffix, sig) {
+  lastSuggest = '';
+  renderGhost();
+  await fetchSuggestCascade(prefix, suffix, sig);
 }
 
 let t;

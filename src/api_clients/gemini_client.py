@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Any, AsyncIterator
+from typing import List, Any, AsyncIterator, Tuple
 import os
 
 from ..types import ApiClient, ChatMessage
@@ -37,27 +37,20 @@ def _extract_gemini_text(resp: Any) -> str:
     # 3) Nothing usable
     return ""
 
-def _to_prompt(messages: List[ChatMessage]) -> str:
-    """Convert chat-style messages into a single text prompt for Gemini.
-
-    Using a simple stitched prompt avoids SDK type/version differences.
-    """
+def _to_contents(messages: List[ChatMessage]) -> Tuple[str, list[Any]]:
+    """Convert chat-style messages into Gemini contents and system instruction."""
     system_texts: list[str] = []
-    dialogue: list[str] = []
+    contents: list[Any] = []
     for m in messages:
         if m.role == "system":
-            system_texts.append(m.content)
+            if m.content:
+                system_texts.append(m.content)
         elif m.role == "user":
-            dialogue.append(f"User: {m.content}")
-        else:
-            dialogue.append(f"Assistant: {m.content}")
-    header = "\n".join(system_texts).strip()
-    body = "\n".join(dialogue).strip()
-    if header and body:
-        return header + "\n\n" + body + "\nAssistant:"
-    if body:
-        return body + "\nAssistant:"
-    return header
+            contents.append(gtypes.Content(role="user", parts=[gtypes.Part(text=m.content or "")]))
+        else:  # assistant
+            contents.append(gtypes.Content(role="model", parts=[gtypes.Part(text=m.content or "")]))
+    system_instruction = "\n\n".join(system_texts).strip()
+    return system_instruction, contents
 
 
 class GeminiClient(ApiClient):
@@ -73,12 +66,13 @@ class GeminiClient(ApiClient):
 
     async def query_chat_model(self, messages: List[ChatMessage]) -> Result[str]:
         try:
-            prompt = _to_prompt(messages)
+            system_instruction, contents = _to_contents(messages)
 
             def _target_tokens(prefix: str, suffix: str, base_cap: int) -> int:
-                # Approximate 4 chars/token, bias with +16 to reach boundary
-                need = (min(len(suffix), 160) // 4) + 16
-                return min(base_cap, max(32, need))
+                # Approximate 4 chars/token, bias with +24 to reach boundary
+                need = (min(len(suffix), 200) // 4) + 24
+                floor = 64 if len(suffix) == 0 else 48
+                return min(base_cap, max(floor, need))
 
             # Try to extract prefix/suffix from the last user message content
             user_content = ""
@@ -87,22 +81,40 @@ class GeminiClient(ApiClient):
                     user_content = m.content or ""
                     break
             max_tok = min(self.model_options.max_tokens, 128)
+            sfx_for_stops = ""
             try:
                 if "<prefix/>" in user_content and "</prefix/>" in user_content and "<suffix/>" in user_content and "</suffix/>" in user_content:
                     pfx = user_content.split("<prefix/>\n", 1)[1].split("\n</prefix/>", 1)[0]
                     sfx = user_content.split("<suffix/>\n", 1)[1].split("\n</suffix/>", 1)[0]
                     max_tok = _target_tokens(pfx, sfx, min(self.model_options.max_tokens, 128))
+                    sfx_for_stops = sfx
                 elif "<mask/>" in user_content:
                     # Fallback heuristic: split around mask for legacy template
                     parts = user_content.split("<mask/>")
                     pfx = parts[0]
                     sfx = parts[1] if len(parts) > 1 else ""
                     max_tok = _target_tokens(pfx, sfx, min(self.model_options.max_tokens, 128))
+                    sfx_for_stops = sfx
             except Exception:
                 pass
+
+            # Build stop sequences: suffix head + generic boundaries
+            stop: list[str] = []
+            try:
+                head16 = (sfx_for_stops or "")[:16].strip()
+                head8  = (sfx_for_stops or "")[:8].strip()
+                for h in (head16, head8):
+                    if len(h) >= 2:
+                        stop.append(h)
+            except Exception:
+                pass
+            # Only add generic stops when there is a suffix
+            if (sfx_for_stops or "").strip():
+                stop.extend(["\n\n", "\n- ", "\n1. "])
+
             resp = await self.client.aio.models.generate_content(
                 model=self.model,
-                contents=prompt,
+                contents=contents if contents else (messages[-1].content if messages else ""),
                 config=gtypes.GenerateContentConfig(
                     temperature=min(self.model_options.temperature, 0.4),
                     top_p=self.model_options.top_p,
@@ -110,32 +122,23 @@ class GeminiClient(ApiClient):
                     frequency_penalty=self.model_options.frequency_penalty,
                     max_output_tokens=max_tok,
                     candidate_count=1,
-                    # stop_sequences=["\n\n", "\n- ", "\n1. "],  # Uncomment if supported in your SDK
-                    # response_mime_type="text/plain",          # Uncomment if supported
+                    system_instruction=system_instruction or None,
+                    stop_sequences=stop,
                 ),
             )
-            text = _extract_gemini_text(resp).strip()
-            if not text:
-                fb = getattr(resp, "prompt_feedback", None)
-                br = getattr(fb, "block_reason", None)
-                fr = None
-                try:
-                    c0 = (getattr(resp, "candidates", None) or [None])[0]
-                    fr = getattr(c0, "finish_reason", None)
-                except Exception:
-                    pass
-                detail = f" (block_reason={br}, finish_reason={fr})" if (br or fr) else ""
-                return err(RuntimeError("Empty result from Gemini" + detail))
-            return ok(text)
+            text = _extract_gemini_text(resp)
+            if text is None or text.strip() == "":
+                return ok("")
+            return ok(text.strip())
         except Exception as e:
             return err(e)
 
     async def stream_chat_model(self, messages: List[ChatMessage]) -> AsyncIterator[str]:
         try:
-            prompt = _to_prompt(messages)
+            system_instruction, contents = _to_contents(messages)
             stream = await self.client.aio.models.generate_content_stream(
                 model=self.model,
-                contents=prompt,
+                contents=contents if contents else (messages[-1].content if messages else ""),
                 config=gtypes.GenerateContentConfig(
                     temperature=self.model_options.temperature,
                     top_p=self.model_options.top_p,
@@ -143,6 +146,7 @@ class GeminiClient(ApiClient):
                     frequency_penalty=self.model_options.frequency_penalty,
                     max_output_tokens=self.model_options.max_tokens,
                     candidate_count=1,
+                    system_instruction=system_instruction or None,
                 ),
             )
             async for chunk in stream:
