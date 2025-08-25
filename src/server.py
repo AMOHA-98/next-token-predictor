@@ -2,7 +2,6 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from fastapi.responses import StreamingResponse
 from typing import Any
 import asyncio
 from pydantic import BaseModel
@@ -119,45 +118,6 @@ async def predict(req: PredictRequest, request: Request):
         if logger.isEnabledFor(logging.INFO):
             logger.info("/predict done user=%s key=%s len=%d", user, key, len(text))
         return PredictResponse(completion=text)
-
-
-@app.post("/predict/stream")
-async def predict_stream(req: PredictRequest):
-    if not settings.enable_streaming:
-        # Fall back to non-streaming predict
-        res = await service.fetch_predictions(req.prefix, req.suffix)
-        text = res.value if res.is_ok() else ""
-        async def one_shot():
-            yield text
-        return StreamingResponse(one_shot(), media_type="text/event-stream")
-
-    async def event_gen():
-        messages = service.build_messages(req.prefix, req.suffix)
-        if not messages:
-            return
-        buffer = ""
-        last_emit = 0.0
-        min_chars = settings.stream_min_chars_before_emit
-        throttle = settings.stream_throttle_ms / 1000.0
-        boundary = settings.stream_emit_on_boundary
-        def is_boundary(text: str) -> bool:
-            if not text:
-                return False
-            return text[-1].isspace() or text[-1] in ".,;:!?)]}\"'"
-        async for chunk in service.client.stream_chat_model(messages):
-            if not isinstance(chunk, str) or not chunk:
-                continue
-            buffer += chunk
-            now = asyncio.get_event_loop().time()
-            should_emit = len(buffer) >= min_chars and (not boundary or is_boundary(buffer)) and (now - last_emit) >= throttle
-            if should_emit:
-                yield buffer
-                last_emit = now
-        if buffer:
-            # final flush
-            yield buffer
-
-    return StreamingResponse(event_gen(), media_type="text/event-stream")
 
 
 class HealthResponse(BaseModel):
