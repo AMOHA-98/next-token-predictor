@@ -30,6 +30,7 @@ app = FastAPI(title="Autocomplete Prediction Service", lifespan=lifespan)
 logger = logging.getLogger("ntp")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger.setLevel(logging.INFO)
 
 # Enable simple, permissive CORS for local testing UI
 app.add_middleware(
@@ -97,7 +98,8 @@ async def predict(req: PredictRequest, request: Request):
                 logger.info("latest-only run user=%s key=%s", user, k)
 
             async def call():
-                return await service.fetch_predictions(p, s)
+                # hard timeout per call; avoids hung upstreams dragging UI responsiveness
+                return await asyncio.wait_for(service.fetch_predictions(p, s), timeout=12.0)
 
             res = await _sf.do(k, call)
             text = res.value if hasattr(res, "is_ok") and res.is_ok() else ""
@@ -168,8 +170,8 @@ async def config():
 
 @app.get("/ui", response_class=HTMLResponse)
 async def ui():
-    html = """<!doctype html>
-<meta charset=\"utf-8\" />
+    html = r"""<!doctype html>
+<meta charset="utf-8" />
 <title>Inline Autocomplete — Smoke Test</title>
 <style>
   body { font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; margin: 2rem; }
@@ -184,15 +186,23 @@ async def ui():
   textarea { background: transparent; position: relative; z-index: 1; }
   .meta { margin-top: .5rem; color: #6b7280; }
 </style>
-<div class=\"wrap\">
-  <div id=\"ghost\" class=\"ghost\"></div>
-  <textarea id=\"box\" spellcheck=\"false\" placeholder=\"Start typing… then pause. Press Tab to accept.\"></textarea>
+<div class="wrap">
+  <div id="ghost" class="ghost"></div>
+  <textarea id="box" spellcheck="false" placeholder="Start typing… then pause. Press Tab to accept."></textarea>
 </div>
-<div class=\"meta\" id=\"meta\"></div>
+<div class="meta" id="meta"></div>
 <script>
 const box = document.getElementById('box');
 const ghost = document.getElementById('ghost');
 const meta  = document.getElementById('meta');
+
+// Stable per-client id for request de-dupe and LatestOnly isolation
+const CLIENT_ID_KEY = 'autocompleteClientId';
+const clientId = localStorage.getItem(CLIENT_ID_KEY) || (() => {
+  const id = (crypto.randomUUID && crypto.randomUUID()) || (Date.now() + '-' + Math.random().toString(16).slice(2));
+  localStorage.setItem(CLIENT_ID_KEY, id);
+  return id;
+})();
 
 // Client policy: adaptive debounce + throttle + cancel + dedupe + boundary
 let lastSuggest = '', lastLatency = 0;
@@ -204,12 +214,17 @@ let lastRequestPrefixLen = 0;
 
 let lastKeyAt = 0;
 const hist = [];
-const BOUNDARY = /[\\s.,;:!?\\-]$/;
+const BOUNDARY = /[\s.,;:!?\-\)\]\}\u00BB\u201D]$/;
 
 function keySig(prefix, suffix) {
   const tail = prefix.slice(-200);
   const head = suffix.slice(0, 60);
   return tail + '\u241f' + head;
+}
+
+function currentSig() {
+  const i = box.selectionStart;
+  return keySig(box.value.slice(0, i), box.value.slice(i));
 }
 
 function adaptiveDebounceMs() {
@@ -220,7 +235,8 @@ function adaptiveDebounceMs() {
 }
 
 function shouldFire(prefix, sinceLastChars) {
-  return BOUNDARY.test(prefix) || sinceLastChars >= 3;
+  const idleMs = performance.now() - lastKeyAt;
+  return BOUNDARY.test(prefix) || sinceLastChars >= 1 || idleMs >= 160;
 }
 
 function splitAtCaret(el) {
@@ -233,6 +249,14 @@ function renderGhost() {
   const before = box.value.slice(0, i);
   const after  = box.value.slice(i);
   ghost.textContent = before + (lastSuggest || '') + after;
+}
+
+function syncScroll() {
+  ghost.style.transform = `translateY(${-box.scrollTop}px)`;
+}
+
+function onSelectionChange() {
+  renderGhost();
 }
 
 async function fetchSuggest(prefix, suffix, sig) {
@@ -253,10 +277,14 @@ async function fetchSuggest(prefix, suffix, sig) {
   try {
     const res = await fetch('/predict', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', 'X-Client-Id': clientId},
       signal: pendingCtrl.signal,
       body: JSON.stringify({prefix, suffix}),
     });
+    if (!res.ok) {
+      meta.textContent = `Request failed: ${res.status}`;
+      return;
+    }
     const json = await res.json().catch(() => ({}));
     lastLatency = Math.round(performance.now() - started);
     lastKeySig = sig;
@@ -300,6 +328,10 @@ function scheduleSuggest() {
 box.addEventListener('input', scheduleSuggest);
 box.addEventListener('click', renderGhost);
 box.addEventListener('keyup', renderGhost);
+box.addEventListener('scroll', syncScroll);
+box.addEventListener('select', onSelectionChange);
+box.addEventListener('mouseup', onSelectionChange);
+box.addEventListener('touchend', onSelectionChange);
 
 box.addEventListener('keydown', (e) => {
   const now = performance.now();
@@ -310,18 +342,34 @@ box.addEventListener('keydown', (e) => {
   lastKeyAt = now;
 
   if (e.key === 'Tab' && lastSuggest) {
+    if (currentSig() !== lastKeySig) {
+      e.preventDefault();
+      lastSuggest = '';
+      renderGhost();
+      return;
+    }
     e.preventDefault();
     const i = box.selectionStart;
     const before = box.value.slice(0, i);
     const after  = box.value.slice(i);
-    box.value = before + lastSuggest + after;
-    const newI = i + lastSuggest.length;
+    function longestOverlapEndVsStart(a, b) { // a: completion, b: suffix
+      const max = Math.min(a.length, b.length);
+      for (let k = max; k > 0; k--) {
+        if (a.slice(-k) === b.slice(0, k)) return k;
+      }
+      return 0;
+    }
+    const comp = lastSuggest;
+    const k = longestOverlapEndVsStart(comp, after);
+    box.value = before + comp + after.slice(k);
+    const newI = before.length + comp.length;
     box.setSelectionRange(newI, newI);
     lastSuggest = '';
     renderGhost();
   }
 });
 
+syncScroll();
 renderGhost();
 </script>"""
     return HTMLResponse(content=html)

@@ -63,9 +63,7 @@ def _remove_ws_overlap_suffix(completion: str, suffix: str) -> str:
 class RemoveOverlap:
     def process(self, prefix: str, suffix: str, completion: str, context) -> str:
         completion = _remove_word_overlap_prefix(prefix, completion)
-        completion = _remove_word_overlap_suffix(completion, suffix)
         completion = _remove_ws_overlap_prefix(prefix, completion)
-        completion = _remove_ws_overlap_suffix(completion, suffix)
         return completion
 
 

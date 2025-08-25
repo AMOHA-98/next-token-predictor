@@ -12,10 +12,10 @@ class ChatMessage(BaseModel):
 
 class ModelOptions(BaseModel):
     temperature: float = 0.2
-    top_p: float = 1.0
+    top_p: float = 0.9
     frequency_penalty: float = 0.0
     presence_penalty: float = 0.0
-    max_tokens: int = 256
+    max_tokens: int = 128
 
 
 class FewShotExample(BaseModel):

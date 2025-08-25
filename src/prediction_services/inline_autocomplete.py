@@ -1,5 +1,4 @@
 from __future__ import annotations
-import re
 from typing import List
 from jinja2 import Environment, BaseLoader, StrictUndefined
 
@@ -26,7 +25,6 @@ class InlineAutoCompleter(PredictionService):
         client,
         system_message: str,
         user_message_template: str,
-        chain_of_thought_regex: str,
         pre_processors,
         post_processors,
         few_shot_examples,
@@ -37,7 +35,6 @@ class InlineAutoCompleter(PredictionService):
         self.template = Environment(
             loader=BaseLoader(), autoescape=False, undefined=StrictUndefined
         ).from_string(user_message_template)
-        self.remove_regex = re.compile(chain_of_thought_regex, re.M)
         self.pre_processors = pre_processors
         self.post_processors = post_processors
         self.few_shot_examples = few_shot_examples
@@ -68,7 +65,6 @@ class InlineAutoCompleter(PredictionService):
             client=client,
             system_message=s.system_message,
             user_message_template=s.user_message_template,
-            chain_of_thought_regex=s.chain_of_thought_removal_regex,
             pre_processors=pre,
             post_processors=post,
             few_shot_examples=s.few_shot_examples,
@@ -142,12 +138,7 @@ class InlineAutoCompleter(PredictionService):
         return base
 
     def _extract_answer(self, result: Result[str]) -> Result[str]:
-        if result.is_err():
-            return result
-        text = result.value
-        if not self.remove_regex.search(text):
-            return ok(text)
-        return ok(self.remove_regex.sub("", text))
+        return result
 
     def _guardrails(self, result: Result[str]) -> Result[str]:
         if result.is_err(): return result

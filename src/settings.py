@@ -32,10 +32,38 @@ class Settings(BaseModel):
     gemini: GeminiSettings = Field(default_factory=GeminiSettings)
 
     model_options: ModelOptions = Field(default_factory=ModelOptions)
-    system_message: str = "You autocomplete text for writers. Output only the completion."
-    user_message_template: str = "{{ prefix }}<mask/>{{ suffix }}"
-    chain_of_thought_removal_regex: str = r"(?s).*?(?=<final_answer>)|</final_answer>.*"
-    few_shot_examples: List[FewShotExample] = Field(default_factory=list)
+    system_message: str = (
+        "You insert text at <mask/> so the combined document reads naturally. "
+        "Use BOTH the prefix and suffix as context. Output only the text to insert. "
+        "Do not repeat what is already present in the prefix. Avoid reprinting the suffix. "
+        "Always output at least one word; if unsure, continue the current phrase concisely."
+    )
+    user_message_template: str = (
+        "Insert text at <mask/> so the final text flows from <prefix/> to <suffix/>.\n"
+        "<prefix/>\n{{ prefix }}\n</prefix/>\n"
+        "<mask/>\n"
+        "<suffix/>\n{{ suffix }}\n</suffix/>\n"
+        "Return ONLY the insertion."
+    )
+    
+    _of_thought_removal_regex: str = r"(?!)"  # disabled (never matches)
+    def _default_few_shots() -> List[FewShotExample]:  # type: ignore[no-redef]
+        return [
+            FewShotExample(
+                context="Text",
+                input="PREFIX: The quick brown <mask/> SUFFIX: over the lazy dog.",
+                answer="fox jumps "
+            ),
+            FewShotExample(
+                context="Text",
+                input=(
+                    "PREFIX: In conclusion, we find that <mask/> SUFFIX: . Therefore, future work should..."
+                ),
+                answer="the proposed method outperforms baselines by a wide margin"
+            ),
+        ]
+
+    few_shot_examples: List[FewShotExample] = Field(default_factory=_default_few_shots)
 
     # Pre/Post settings
     dont_include_dataviews: bool = True

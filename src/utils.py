@@ -3,6 +3,11 @@ import random
 from typing import Any, Dict, Generic, TypeVar, Callable
 import hashlib
 import httpx
+try:
+    import h2  # type: ignore
+    _HAS_H2 = True
+except Exception:
+    _HAS_H2 = False
 
 T = TypeVar("T")
 
@@ -51,11 +56,11 @@ def generate_random_string(n: int) -> str:
 _HTTP_CLIENT: httpx.AsyncClient | None = None
 
 
-async def init_http_client(timeout: float = 30.0) -> None:
+async def init_http_client(timeout: float = 25.0) -> None:
     global _HTTP_CLIENT
     if _HTTP_CLIENT is None:
         transport = httpx.AsyncHTTPTransport(retries=2)
-        _HTTP_CLIENT = httpx.AsyncClient(timeout=timeout, transport=transport)
+        _HTTP_CLIENT = httpx.AsyncClient(timeout=timeout, transport=transport, http2=_HAS_H2)
 
 
 async def get_http_client() -> httpx.AsyncClient:
