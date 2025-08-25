@@ -71,8 +71,8 @@ class GeminiClient(ApiClient):
             def _target_tokens(prefix: str, suffix: str, base_cap: int) -> int:
                 # Approximate 4 chars/token, bias with +24 to reach boundary
                 need = (min(len(suffix), 200) // 4) + 24
-                floor = 64 if len(suffix) == 0 else 48
-                return min(base_cap, max(floor, need))
+                floor = 96 if len(suffix) == 0 else 48
+                return min(max(base_cap, 160), max(floor, need))
 
             # Try to extract prefix/suffix from the last user message content
             user_content = ""

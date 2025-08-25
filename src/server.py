@@ -265,6 +265,7 @@ const CASCADE_MIN_LEN = 12;
 const END_BOUNDARY = /[.!?…]\s?$|[\n\r]$/;
 
 async function fetchOnce(prefix, suffix, sig, signal) {
+  const started = performance.now();
   const res = await fetch('/predict', {
     method: 'POST',
     headers: {'Content-Type': 'application/json', 'X-Client-Id': clientId},
@@ -272,8 +273,9 @@ async function fetchOnce(prefix, suffix, sig, signal) {
     body: JSON.stringify({prefix, suffix}),
   });
   const json = await res.json().catch(() => ({}));
+  const dt = Math.round(performance.now() - started);
   const text = (json && json.completion) ? json.completion : '';
-  return { text };
+  return { text, dt };
 }
 
 async function fetchSuggestCascade(prefix, suffix, sig) {
@@ -299,7 +301,7 @@ async function fetchSuggestCascade(prefix, suffix, sig) {
     if (keySig(prefix + accum, suffix) !== sig) break;
     if (performance.now() - t0 > CASCADE_MAX_MS) break;
 
-    const { text } = await fetchOnce(prefix + accum, suffix, sig, pendingCtrl.signal);
+    const { text, dt } = await fetchOnce(prefix + accum, suffix, sig, pendingCtrl.signal);
     if (pendingCtrl.signal.aborted) return;
 
     let delta = text || '';
@@ -312,6 +314,12 @@ async function fetchSuggestCascade(prefix, suffix, sig) {
     accum += delta;
     lastSuggest = accum;
     renderGhost();
+
+    // Update meta and keys for Tab accept
+    lastLatency = dt;
+    lastKeySig = sig;
+    lastRequestPrefixLen = (prefix + accum).length;
+    meta.textContent = `Latency: ${lastLatency} ms  •  Tokens max: server-side`;
 
     if (END_BOUNDARY.test(accum) || accum.length >= 64) break;
     if (accum.length >= CASCADE_MIN_LEN) break;
