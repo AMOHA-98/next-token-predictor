@@ -329,7 +329,24 @@ async function fetchSuggestCascade(prefix, suffix, sig) {
 async function fetchSuggest(prefix, suffix, sig) {
   lastSuggest = '';
   renderGhost();
-  await fetchSuggestCascade(prefix, suffix, sig);
+  await fetchSuggestForever(prefix, suffix, sig);
+}
+
+async function fetchSuggestForever(prefix, suffix, sig) {
+  const burstBudgetMs = 1200; // keep extending for up to ~1.2s per idle burst
+  const t0 = performance.now();
+  for (let iter = 0; iter < 20; iter++) { // hard cap to avoid runaway
+    if (currentSig() !== keySig(prefix, suffix)) break; // stale guard
+    await fetchSuggestCascade(prefix, suffix, sig);
+    if (pendingCtrl && pendingCtrl.signal && pendingCtrl.signal.aborted) return;
+    const delta = lastSuggest || '';
+    if (!delta) break;
+    if (END_BOUNDARY.test(delta)) break;
+    if (performance.now() - t0 > burstBudgetMs) break;
+    // advance prefix and signature to keep extending
+    prefix = prefix + delta;
+    sig = keySig(prefix, suffix);
+  }
 }
 
 let t;

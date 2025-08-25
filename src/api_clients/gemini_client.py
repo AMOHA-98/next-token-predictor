@@ -80,20 +80,20 @@ class GeminiClient(ApiClient):
                 if m.role == "user":
                     user_content = m.content or ""
                     break
-            max_tok = min(self.model_options.max_tokens, 128)
+            max_tok = min(self.model_options.max_tokens, 192)
             sfx_for_stops = ""
             try:
                 if "<prefix/>" in user_content and "</prefix/>" in user_content and "<suffix/>" in user_content and "</suffix/>" in user_content:
                     pfx = user_content.split("<prefix/>\n", 1)[1].split("\n</prefix/>", 1)[0]
                     sfx = user_content.split("<suffix/>\n", 1)[1].split("\n</suffix/>", 1)[0]
-                    max_tok = _target_tokens(pfx, sfx, min(self.model_options.max_tokens, 128))
+                    max_tok = _target_tokens(pfx, sfx, min(self.model_options.max_tokens, 192))
                     sfx_for_stops = sfx
                 elif "<mask/>" in user_content:
                     # Fallback heuristic: split around mask for legacy template
                     parts = user_content.split("<mask/>")
                     pfx = parts[0]
                     sfx = parts[1] if len(parts) > 1 else ""
-                    max_tok = _target_tokens(pfx, sfx, min(self.model_options.max_tokens, 128))
+                    max_tok = _target_tokens(pfx, sfx, min(self.model_options.max_tokens, 192))
                     sfx_for_stops = sfx
             except Exception:
                 pass
